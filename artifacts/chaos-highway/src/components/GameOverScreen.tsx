@@ -133,10 +133,6 @@ export function GameOverScreen({
           </button>
         </div>
 
-        {/* Y8 SDK PLACEHOLDER:
-            // Show interstitial ad here:
-            // if (window.y8) window.y8.showAd?.();
-        */}
       </div>
     </div>
   );

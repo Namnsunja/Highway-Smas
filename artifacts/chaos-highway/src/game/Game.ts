@@ -16,7 +16,8 @@ export interface GameCallbacks {
   onChainEvent: (chain: number) => void;
   onShake: (strength: number) => void;
   onRunEnd: (result: RunResult) => void;
-  onLevelUp: (level: number, themeName: string) => void;
+  onLevelUp: (level: number, themeName: string, reward: { health: number; boost: number; bonus: number }) => void;
+  onVictory?: (result: RunResult) => void;
 }
 
 export interface HudData {
@@ -488,7 +489,7 @@ export const LEVEL_THEMES: LevelTheme[] = [
     billboardColors: [0xff2bd6, 0xff4422, 0xffd400, 0x00f0ff, 0x66ff66],
     trafficSpeedMul: 1.55, trafficDensityMul: 1.3,
     playerSpeedBonus: 26,
-    distance: 99999, // final level — no further advance
+    distance: 3000, // final level — completing it triggers victory
   },
 ];
 
@@ -498,6 +499,22 @@ interface HighwaySegment {
   startZ: number;
   endZ: number;
   decorations: THREE.Object3D[];
+}
+
+// Cached materials per theme — reused across segments for huge perf wins
+interface ThemeMats {
+  road: THREE.MeshStandardMaterial;
+  roadCracked: THREE.MeshStandardMaterial;
+  stripe: THREE.MeshStandardMaterial;
+  edgeLine: THREE.MeshStandardMaterial;
+  curb: THREE.MeshStandardMaterial;
+  sidewalk: THREE.MeshStandardMaterial;
+  buildings: THREE.MeshStandardMaterial[]; // 4 variants
+  billboards: THREE.MeshStandardMaterial[]; // 4 variants
+  lampPole: THREE.MeshStandardMaterial;
+  lampGlow: THREE.MeshStandardMaterial;
+  gantryFrame: THREE.MeshStandardMaterial;
+  gantryPanel: THREE.MeshStandardMaterial;
 }
 
 // ---------- Traffic / pickup entities ----------
@@ -622,6 +639,15 @@ export class Game {
   private nextSegmentZ = 0;
   private firstSegmentZ = 0;
   private cityProps: THREE.Object3D[] = [];
+  private starField?: THREE.Points;
+  private moon?: THREE.Mesh;
+  private moonGlow?: THREE.Mesh;
+  private gantryCounter = 0;
+  private victoryTriggered = false;
+
+  // Cached per-theme materials & geometries — major perf win
+  private themeMatCache: Map<string, ThemeMats> = new Map();
+  private sharedMats: Set<THREE.Material> = new Set();
 
   // Entities
   private traffic: TrafficCar[] = [];
@@ -638,6 +664,7 @@ export class Game {
   private keys: Record<string, boolean> = {};
   private mobileSteer = 0; // -1..1
   private mobileBoost = false;
+  private mobileBrake = false;
   private mobilePower = false;
 
   // Camera shake
@@ -763,6 +790,9 @@ export class Game {
   setMobileSteer(v: number) {
     this.mobileSteer = clamp(v, -1, 1);
   }
+  setMobileBrake(v: boolean) {
+    this.mobileBrake = v;
+  }
   setMobileBoost(v: boolean) {
     this.mobileBoost = v;
   }
@@ -785,6 +815,155 @@ export class Game {
 
     this.hemi = new THREE.HemisphereLight(this.theme.hemiSky, this.theme.hemiGround, 0.5);
     this.scene.add(this.hemi);
+
+    this.setupSky();
+  }
+
+  /** Distant starfield + giant moon backdrop. Kept far away & always around the player. */
+  private setupSky() {
+    // Starfield: cloud of points scattered across a hemisphere ~280m above
+    const starCount = 320;
+    const starGeom = new THREE.BufferGeometry();
+    const positions = new Float32Array(starCount * 3);
+    for (let i = 0; i < starCount; i++) {
+      const u = Math.random();
+      const v = Math.random();
+      const theta = u * Math.PI * 2;
+      const phi = Math.acos(v * 0.7 + 0.1); // upper hemisphere bias
+      const r = 280 + Math.random() * 80;
+      positions[i * 3 + 0] = r * Math.sin(phi) * Math.cos(theta);
+      positions[i * 3 + 1] = 60 + r * Math.cos(phi) * 0.6;
+      positions[i * 3 + 2] = r * Math.sin(phi) * Math.sin(theta);
+    }
+    starGeom.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+    const starMat = new THREE.PointsMaterial({
+      color: 0xffffff,
+      size: 1.1,
+      sizeAttenuation: false,
+      transparent: true,
+      opacity: 0.85,
+      depthWrite: false,
+      fog: false,
+    });
+    this.starField = new THREE.Points(starGeom, starMat);
+    this.scene.add(this.starField);
+    this.sharedMats.add(starMat);
+
+    // Moon — big distant glowing disc
+    const moonMat = new THREE.MeshBasicMaterial({ color: 0xffffff, fog: false });
+    this.moon = new THREE.Mesh(new THREE.SphereGeometry(22, 18, 14), moonMat);
+    this.moon.position.set(-160, 110, 320);
+    this.scene.add(this.moon);
+    this.sharedMats.add(moonMat);
+
+    // Soft halo around the moon
+    const haloMat = new THREE.MeshBasicMaterial({
+      color: 0xff88dd,
+      transparent: true,
+      opacity: 0.32,
+      fog: false,
+    });
+    this.moonGlow = new THREE.Mesh(new THREE.SphereGeometry(38, 18, 14), haloMat);
+    this.moonGlow.position.copy(this.moon.position);
+    this.scene.add(this.moonGlow);
+    this.sharedMats.add(haloMat);
+  }
+
+  /** Returns (or builds) the shared material set for the given theme. */
+  private getThemeMats(theme: LevelTheme): ThemeMats {
+    const cached = this.themeMatCache.get(theme.shortName);
+    if (cached) return cached;
+
+    const baseRoad = new THREE.Color(theme.roadColor);
+    const road = new THREE.MeshStandardMaterial({
+      color: baseRoad,
+      roughness: 0.92,
+      metalness: 0.1,
+      emissive: new THREE.Color(theme.roadColor).multiplyScalar(0.18),
+      emissiveIntensity: 0.18,
+    });
+    const roadCracked = new THREE.MeshStandardMaterial({
+      color: new THREE.Color(theme.roadColor).multiplyScalar(0.82),
+      roughness: 0.97,
+      metalness: 0.05,
+      emissive: new THREE.Color(theme.roadColor).multiplyScalar(0.12),
+      emissiveIntensity: 0.12,
+    });
+    const stripe = new THREE.MeshStandardMaterial({
+      color: 0xffd400,
+      emissive: 0xffd400,
+      emissiveIntensity: 0.7,
+    });
+    const edgeLine = new THREE.MeshStandardMaterial({
+      color: 0xffffff,
+      emissive: 0xffffff,
+      emissiveIntensity: 0.4,
+    });
+    const curb = new THREE.MeshStandardMaterial({
+      color: theme.curbColor,
+      emissive: theme.curbColor,
+      emissiveIntensity: 1.4,
+    });
+    const sidewalk = new THREE.MeshStandardMaterial({
+      color: 0x18121e,
+      roughness: 0.92,
+    });
+
+    const buildings: THREE.MeshStandardMaterial[] = [];
+    for (let i = 0; i < 4; i++) {
+      const tint = theme.buildingTints[i % theme.buildingTints.length]!;
+      const emissiveCol = theme.billboardColors[i % theme.billboardColors.length]!;
+      buildings.push(new THREE.MeshStandardMaterial({
+        color: tint,
+        roughness: 0.85,
+        metalness: 0.25,
+        emissive: emissiveCol,
+        emissiveIntensity: 0.06,
+      }));
+    }
+
+    const billboards: THREE.MeshStandardMaterial[] = [];
+    for (const c of theme.billboardColors) {
+      billboards.push(new THREE.MeshStandardMaterial({
+        color: c,
+        emissive: c,
+        emissiveIntensity: 1.7,
+      }));
+    }
+
+    const lampPole = new THREE.MeshStandardMaterial({ color: 0x222233, roughness: 0.7 });
+    const lampGlow = new THREE.MeshStandardMaterial({
+      color: 0xffeebb,
+      emissive: 0xffeebb,
+      emissiveIntensity: 1.6,
+    });
+    const gantryFrame = new THREE.MeshStandardMaterial({
+      color: 0x222230,
+      roughness: 0.6,
+      metalness: 0.7,
+    });
+    const gantryPanel = new THREE.MeshStandardMaterial({
+      color: theme.curbColor,
+      emissive: theme.curbColor,
+      emissiveIntensity: 1.5,
+    });
+
+    const mats: ThemeMats = {
+      road, roadCracked, stripe, edgeLine, curb, sidewalk,
+      buildings, billboards, lampPole, lampGlow, gantryFrame, gantryPanel,
+    };
+    // Mark all as shared so segment recycling never disposes them
+    [road, roadCracked, stripe, edgeLine, curb, sidewalk, lampPole, lampGlow, gantryFrame, gantryPanel,
+     ...buildings, ...billboards].forEach((m) => this.sharedMats.add(m));
+
+    // Update moon halo color to match the theme so the sky feels coherent
+    if (this.moonGlow) {
+      const haloMat = this.moonGlow.material as THREE.MeshBasicMaterial;
+      haloMat.color.setHex(theme.hemiSky);
+    }
+
+    this.themeMatCache.set(theme.shortName, mats);
+    return mats;
   }
 
   private applyTheme(theme: LevelTheme) {
@@ -813,18 +992,43 @@ export class Game {
   }
 
   private checkLevelUp() {
-    const next = LEVEL_THEMES[this.level]; // levels are 1-indexed; LEVEL_THEMES[0] is level 1
-    if (!next) return;
     const traveled = this.playerZ - this.levelStartZ;
-    if (traveled >= this.theme.distance) {
+    if (traveled < this.theme.distance) return;
+
+    const next = LEVEL_THEMES[this.level]; // levels are 1-indexed; LEVEL_THEMES[0] is level 1
+    if (next) {
       this.level += 1;
       this.levelStartZ = this.playerZ;
       this.applyTheme(next);
-      this.callbacks.onLevelUp(this.level, next.name);
-      // Brief reward — top up boost and small heal as a "checkpoint"
-      this.boost = Math.min(this.boostMax, this.boost + 40);
-      this.health = Math.min(this.maxHealth, this.health + 20);
-      this.invuln = Math.max(this.invuln, 1.5);
+      this.sound.setMusicLevel(this.level);
+      // Reward — top up boost, modest heal, brief invuln, score bonus
+      const heal = 25;
+      const boostFill = 50;
+      const bonus = 500 * this.level;
+      this.boost = Math.min(this.boostMax, this.boost + boostFill);
+      this.health = Math.min(this.maxHealth, this.health + heal);
+      this.invuln = Math.max(this.invuln, 1.8);
+      this.score += bonus;
+      this.sound.powerup();
+      this.callbacks.onLevelUp(this.level, next.name, { health: heal, boost: boostFill, bonus });
+    } else if (!this.victoryTriggered) {
+      // Finished the final level — VICTORY
+      this.victoryTriggered = true;
+      const result: RunResult = {
+        distance: Math.floor(this.playerZ),
+        score: Math.floor(this.score) + 5000, // big victory bonus
+        scrap: this.runScrapEarned(),
+        newHighScore: (this.score + 5000) > this.bestScoreAtStart,
+        bestChain: this.bestChain,
+        level: this.level,
+      };
+      this.score += 5000;
+      this.callbacks.onVictory?.(result);
+      // Don't actually end the run — let the player continue endlessly with bonus points
+      this.levelStartZ = this.playerZ; // start a new "endless" stretch
+      this.boost = this.boostMax;
+      this.health = Math.min(this.maxHealth, this.health + 50);
+      this.invuln = 2.5;
     }
   }
 
@@ -903,9 +1107,11 @@ export class Game {
     this.level = 1;
     this.theme = LEVEL_THEMES[0]!;
     this.levelStartZ = 0;
+    this.victoryTriggered = false;
     this.trafficSpawnZ = 80;
     this.powerSpawnZ = 200;
     this.barrierSpawnZ = 350;
+    this.gantryCounter = 0;
     this.firstSegmentZ = -SEGMENT_LENGTH * 2;
     this.nextSegmentZ = this.firstSegmentZ;
 
@@ -961,36 +1167,34 @@ export class Game {
   private spawnSegment() {
     const grp = new THREE.Group();
     const z = this.nextSegmentZ;
+    const mats = this.getThemeMats(this.theme);
 
-    // Road surface — colored by current level theme
+    // Road surface — colored by current level theme (cached material)
     const roadGeom = new THREE.PlaneGeometry(ROAD_HALF_WIDTH * 2, SEGMENT_LENGTH);
-    const cracked = Math.random() < 0.6;
-    const baseRoad = new THREE.Color(this.theme.roadColor);
-    if (cracked) baseRoad.multiplyScalar(0.85);
-    const roadMat = new THREE.MeshStandardMaterial({
-      color: baseRoad,
-      roughness: 0.95,
-      metalness: 0.05,
-      emissive: new THREE.Color(this.theme.roadColor).multiplyScalar(0.15),
-      emissiveIntensity: 0.15,
-    });
+    const roadMat = Math.random() < 0.4 ? mats.roadCracked : mats.road;
     const road = new THREE.Mesh(roadGeom, roadMat);
     road.rotation.x = -Math.PI / 2;
     road.position.set(0, 0, z + SEGMENT_LENGTH / 2);
     grp.add(road);
 
-    // Lane stripes (3 dashed)
-    const stripeMat = new THREE.MeshStandardMaterial({
-      color: 0xffd400,
-      emissive: 0xffd400,
-      emissiveIntensity: 0.6,
-    });
-    const dashCount = 8;
+    // Painted edge lines (white, on shoulders) — adds road detail
+    const edgeGeom = new THREE.PlaneGeometry(0.18, SEGMENT_LENGTH);
+    const edgeL = new THREE.Mesh(edgeGeom, mats.edgeLine);
+    edgeL.rotation.x = -Math.PI / 2;
+    edgeL.position.set(-ROAD_HALF_WIDTH + 0.4, 0.015, z + SEGMENT_LENGTH / 2);
+    grp.add(edgeL);
+    const edgeR = new THREE.Mesh(edgeGeom, mats.edgeLine);
+    edgeR.rotation.x = -Math.PI / 2;
+    edgeR.position.set(ROAD_HALF_WIDTH - 0.4, 0.015, z + SEGMENT_LENGTH / 2);
+    grp.add(edgeR);
+
+    // Lane stripes (3 dashed) — fewer dashes, shared material
+    const dashCount = 6;
+    const dashGeom = new THREE.PlaneGeometry(0.22, 2.6);
     for (let lane = 0; lane < 3; lane++) {
       const xPos = -ROAD_HALF_WIDTH + (ROAD_HALF_WIDTH * 2 * (lane + 1)) / 4;
       for (let d = 0; d < dashCount; d++) {
-        const dashGeom = new THREE.PlaneGeometry(0.18, 2.2);
-        const dash = new THREE.Mesh(dashGeom, stripeMat);
+        const dash = new THREE.Mesh(dashGeom, mats.stripe);
         dash.rotation.x = -Math.PI / 2;
         dash.position.set(
           xPos,
@@ -1001,62 +1205,44 @@ export class Game {
       }
     }
 
-    // Side curbs (neon edges) — themed
-    const curbMat = new THREE.MeshStandardMaterial({
-      color: this.theme.curbColor,
-      emissive: this.theme.curbColor,
-      emissiveIntensity: 1.2,
-    });
+    // Side curbs (neon edges) — themed cached material
     const curbGeom = new THREE.BoxGeometry(0.4, 0.25, SEGMENT_LENGTH);
-    const curbL = new THREE.Mesh(curbGeom, curbMat);
+    const curbL = new THREE.Mesh(curbGeom, mats.curb);
     curbL.position.set(-ROAD_HALF_WIDTH - 0.2, 0.12, z + SEGMENT_LENGTH / 2);
     grp.add(curbL);
-    const curbR = new THREE.Mesh(curbGeom, curbMat);
+    const curbR = new THREE.Mesh(curbGeom, mats.curb);
     curbR.position.set(ROAD_HALF_WIDTH + 0.2, 0.12, z + SEGMENT_LENGTH / 2);
     grp.add(curbR);
 
-    // Sidewalk strip
-    const sidewalkMat = new THREE.MeshStandardMaterial({ color: 0x18121e, roughness: 0.9 });
+    // Sidewalk strip — cached material
     const sidewalkGeom = new THREE.PlaneGeometry(4, SEGMENT_LENGTH);
-    const swL = new THREE.Mesh(sidewalkGeom, sidewalkMat);
+    const swL = new THREE.Mesh(sidewalkGeom, mats.sidewalk);
     swL.rotation.x = -Math.PI / 2;
     swL.position.set(-ROAD_HALF_WIDTH - 2.4, 0.0, z + SEGMENT_LENGTH / 2);
     grp.add(swL);
-    const swR = new THREE.Mesh(sidewalkGeom, sidewalkMat);
+    const swR = new THREE.Mesh(sidewalkGeom, mats.sidewalk);
     swR.rotation.x = -Math.PI / 2;
     swR.position.set(ROAD_HALF_WIDTH + 2.4, 0.0, z + SEGMENT_LENGTH / 2);
     grp.add(swR);
 
-    // Procedural city skyline buildings on each side
+    // Procedural city skyline buildings on each side — fewer per segment, cached mats
     const decorations: THREE.Object3D[] = [];
     for (let side = -1; side <= 1; side += 2) {
-      const bcount = 2 + Math.floor(Math.random() * 3);
+      const bcount = 1 + Math.floor(Math.random() * 3); // 1..3
       for (let i = 0; i < bcount; i++) {
         const bw = rand(4, 9);
         const bh = rand(8, 28);
         const bd = rand(4, 9);
-        const baseColor = pick(this.theme.buildingTints);
-        const bMat = new THREE.MeshStandardMaterial({
-          color: baseColor,
-          roughness: 0.85,
-          metalness: 0.2,
-          emissive: pick(this.theme.billboardColors),
-          emissiveIntensity: 0.05,
-        });
+        const bMat = mats.buildings[Math.floor(Math.random() * mats.buildings.length)]!;
         const b = new THREE.Mesh(new THREE.BoxGeometry(bw, bh, bd), bMat);
         const xOff = side * (ROAD_HALF_WIDTH + 6 + Math.random() * 18);
         b.position.set(xOff, bh / 2, z + Math.random() * SEGMENT_LENGTH);
         grp.add(b);
         decorations.push(b);
 
-        // Add neon billboard (random)
-        if (Math.random() < 0.35) {
-          const bbColor = pick(this.theme.billboardColors);
-          const bbMat = new THREE.MeshStandardMaterial({
-            color: bbColor,
-            emissive: bbColor,
-            emissiveIntensity: 1.6,
-          });
+        // Add neon billboard (random) — cached material per color
+        if (Math.random() < 0.4) {
+          const bbMat = mats.billboards[Math.floor(Math.random() * mats.billboards.length)]!;
           const bbGeom = new THREE.BoxGeometry(rand(2.5, 5.5), rand(1.2, 2.6), 0.2);
           const bb = new THREE.Mesh(bbGeom, bbMat);
           bb.position.set(
@@ -1070,26 +1256,24 @@ export class Game {
         }
       }
 
-      // Streetlight
-      if (Math.random() < 0.6) {
-        const poleMat = new THREE.MeshStandardMaterial({ color: 0x222233, roughness: 0.7 });
-        const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 6, 6), poleMat);
-        pole.position.set(side * (ROAD_HALF_WIDTH + 1), 3, z + Math.random() * SEGMENT_LENGTH);
+      // Streetlight — cached materials
+      if (Math.random() < 0.65) {
+        const poleZ = z + Math.random() * SEGMENT_LENGTH;
+        const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 6, 6), mats.lampPole);
+        pole.position.set(side * (ROAD_HALF_WIDTH + 1), 3, poleZ);
         grp.add(pole);
-        const lampMat = new THREE.MeshStandardMaterial({
-          color: 0xffeebb,
-          emissive: 0xffeebb,
-          emissiveIntensity: 1.4,
-        });
-        const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.4, 8, 6), lampMat);
-        lamp.position.set(side * (ROAD_HALF_WIDTH + 0.4), 5.6, pole.position.z);
+        // Arched arm
+        const arm = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.12, 0.12), mats.lampPole);
+        arm.position.set(side * (ROAD_HALF_WIDTH + 0.5), 5.9, poleZ);
+        grp.add(arm);
+        const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.42, 8, 6), mats.lampGlow);
+        lamp.position.set(side * (ROAD_HALF_WIDTH + 0.0), 5.7, poleZ);
         grp.add(lamp);
-        decorations.push(pole);
-        decorations.push(lamp);
+        decorations.push(pole, arm, lamp);
       }
 
-      // Wrecked abandoned car on shoulder (decoration)
-      if (Math.random() < 0.18) {
+      // Wrecked abandoned car on shoulder (decoration) — these still create unique mats but rare
+      if (Math.random() < 0.16) {
         const wreck = buildCarMesh({
           color: pick([0x444444, 0x222233, 0x553322]),
           width: 1.9,
@@ -1110,6 +1294,33 @@ export class Game {
       }
     }
 
+    // Overhead gantry / archway — appears every 4-6 segments, themed
+    this.gantryCounter += 1;
+    if (this.gantryCounter >= 4 && Math.random() < 0.5) {
+      this.gantryCounter = 0;
+      const gantryZ = z + SEGMENT_LENGTH * 0.5;
+      const beam = new THREE.Mesh(
+        new THREE.BoxGeometry(ROAD_HALF_WIDTH * 2 + 4, 0.7, 0.7),
+        mats.gantryFrame,
+      );
+      beam.position.set(0, 7.6, gantryZ);
+      grp.add(beam);
+      const pillarL = new THREE.Mesh(new THREE.BoxGeometry(0.55, 7.6, 0.55), mats.gantryFrame);
+      pillarL.position.set(-ROAD_HALF_WIDTH - 1.5, 3.8, gantryZ);
+      grp.add(pillarL);
+      const pillarR = new THREE.Mesh(new THREE.BoxGeometry(0.55, 7.6, 0.55), mats.gantryFrame);
+      pillarR.position.set(ROAD_HALF_WIDTH + 1.5, 3.8, gantryZ);
+      grp.add(pillarR);
+      // Glowing panels under the beam (4 of them, lit by curb color)
+      for (let i = 0; i < 4; i++) {
+        const px = -ROAD_HALF_WIDTH + (ROAD_HALF_WIDTH * 2 * (i + 0.5)) / 4;
+        const panel = new THREE.Mesh(new THREE.BoxGeometry(2.5, 0.18, 0.18), mats.gantryPanel);
+        panel.position.set(px, 7.05, gantryZ);
+        grp.add(panel);
+      }
+      decorations.push(beam, pillarL, pillarR);
+    }
+
     this.scene.add(grp);
     this.segments.push({ group: grp, startZ: z, endZ: z + SEGMENT_LENGTH, decorations });
     this.nextSegmentZ += SEGMENT_LENGTH;
@@ -1119,14 +1330,17 @@ export class Game {
     while (this.segments.length > 0 && this.segments[0]!.endZ < this.playerZ - VISIBLE_BEHIND * SEGMENT_LENGTH) {
       const old = this.segments.shift()!;
       this.scene.remove(old.group);
-      // Free geometries / materials
+      // Free geometries; skip materials that are shared (cached per-theme)
       old.group.traverse((obj) => {
         const mesh = obj as THREE.Mesh;
         if (mesh.isMesh) {
           mesh.geometry?.dispose?.();
           const mat = mesh.material as THREE.Material | THREE.Material[];
-          if (Array.isArray(mat)) mat.forEach((m) => m.dispose());
-          else mat?.dispose?.();
+          if (Array.isArray(mat)) {
+            mat.forEach((m) => { if (!this.sharedMats.has(m)) m.dispose(); });
+          } else if (mat && !this.sharedMats.has(mat)) {
+            mat.dispose?.();
+          }
         }
       });
       this.spawnSegment();
@@ -1419,6 +1633,7 @@ export class Game {
     steerInput += this.mobileSteer;
     steerInput = clamp(steerInput, -1, 1);
     let boostHeld = !!(this.keys["Space"] || this.keys["ShiftLeft"] || this.keys["ShiftRight"] || this.mobileBoost);
+    const brakeHeld = !!(this.keys["KeyS"] || this.keys["ArrowDown"] || this.mobileBrake);
 
     // ----- Slow-mo factor -----
     const slowFactor = this.slowMo > 0 ? 0.4 : 1;
@@ -1443,16 +1658,19 @@ export class Game {
 
     // ----- Player physics -----
     const themeBonus = this.theme.playerSpeedBonus;
-    const targetSpeed = (this.maxSpeed + themeBonus) * speedBoostMul;
+    let targetSpeed = (this.maxSpeed + themeBonus) * speedBoostMul;
+    // Brake — drop the target speed and damp faster toward it
+    if (brakeHeld) targetSpeed *= 0.45;
     // Auto-acceleration ramp with distance
     const distRamp = Math.min(1.4, 1 + this.playerZ / 8000);
+    const dampRate = brakeHeld ? 5.5 : 2.5; // brake = sharper deceleration
     this.playerSpeed = THREE.MathUtils.damp(
       this.playerSpeed,
       Math.min(targetSpeed, 22 * distRamp + (this.maxSpeed + themeBonus) * 0.55 * speedBoostMul + 18 * (this.boostActive ? 1 : 0)),
-      2.5,
+      dampRate,
       sdt,
     );
-    this.playerSpeed = clamp(this.playerSpeed, 16, 145);
+    this.playerSpeed = clamp(this.playerSpeed, brakeHeld ? 12 : 16, 160);
 
     this.playerZ += this.playerSpeed * sdt;
     this.playerGroup.position.z = this.playerZ;
@@ -1497,6 +1715,11 @@ export class Game {
     // ----- Invuln decay -----
     if (this.invuln > 0) this.invuln -= dt;
     if (this.hitFlash > 0) this.hitFlash -= dt;
+
+    // ----- Sky tracking — keep stars/moon around the player so they never get left behind
+    if (this.starField) this.starField.position.z = this.playerZ;
+    if (this.moon) this.moon.position.z = this.playerZ + 320;
+    if (this.moonGlow) this.moonGlow.position.z = this.playerZ + 320;
 
     // ----- World streaming -----
     this.recycleSegments();
@@ -1994,8 +2217,9 @@ export class Game {
       maxLife: 0.55,
       shrink: 1.5,
     });
-    // Sparks
-    for (let i = 0; i < 22 * power; i++) {
+    // Sparks (reduced count for perf)
+    const sparkCount = Math.floor(14 * power);
+    for (let i = 0; i < sparkCount; i++) {
       const sparkColor = Math.random() < 0.5 ? 0xffd400 : 0xff7a00;
       const m = new THREE.MeshBasicMaterial({ color: sparkColor, transparent: true, opacity: 1 });
       const g = new THREE.SphereGeometry(0.18 + Math.random() * 0.18, 5, 4);
@@ -2010,8 +2234,9 @@ export class Game {
         shrink: 1,
       });
     }
-    // Smoke puffs
-    for (let i = 0; i < 8 * power; i++) {
+    // Smoke puffs (reduced count for perf)
+    const smokeCount = Math.floor(5 * power);
+    for (let i = 0; i < smokeCount; i++) {
       this.spawnParticleSmoke(pos.clone().add(new THREE.Vector3(rand(-0.6, 0.6), rand(0.3, 1), rand(-0.6, 0.6))));
     }
   }

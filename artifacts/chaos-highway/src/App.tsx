@@ -24,6 +24,13 @@ interface LevelBanner {
   id: number;
   level: number;
   themeName: string;
+  reward: { health: number; boost: number; bonus: number };
+}
+
+interface VictoryBanner {
+  id: number;
+  score: number;
+  distance: number;
 }
 
 export default function App() {
@@ -41,9 +48,11 @@ export default function App() {
   const [shakeTrigger, setShakeTrigger] = useState(0);
   const [runResult, setRunResult] = useState<RunResult | null>(null);
   const [levelBanner, setLevelBanner] = useState<LevelBanner | null>(null);
+  const [victoryBanner, setVictoryBanner] = useState<VictoryBanner | null>(null);
   const [submittedThisRun, setSubmittedThisRun] = useState(false);
   const floatId = useRef(0);
   const bannerId = useRef(0);
+  const victoryId = useRef(0);
 
   // Init game once
   useEffect(() => {
@@ -68,15 +77,25 @@ export default function App() {
         setShakeTrigger((t) => t + 1);
         void s;
       },
-      onLevelUp: (level, themeName) => {
+      onLevelUp: (level, themeName, reward) => {
         const id = ++bannerId.current;
-        setLevelBanner({ id, level, themeName });
+        setLevelBanner({ id, level, themeName, reward });
         setShakeTrigger((t) => t + 1);
         setTimeout(() => {
           setLevelBanner((b) => (b && b.id === id ? null : b));
-        }, 2800);
+        }, 3200);
+      },
+      onVictory: (result) => {
+        const id = ++victoryId.current;
+        setVictoryBanner({ id, score: result.score, distance: result.distance });
+        setShakeTrigger((t) => t + 1);
+        sound.powerup();
+        setTimeout(() => {
+          setVictoryBanner((b) => (b && b.id === id ? null : b));
+        }, 5000);
       },
       onRunEnd: (result) => {
+        sound.stopMusic();
         setSave((prev) => {
           const earnedScrap = (hudRef.current?.scrap ?? 0) - scrapAtRunStartRef.current;
           const newBank = prev.totalScrap + Math.max(0, earnedScrap);
@@ -146,33 +165,33 @@ export default function App() {
   const startRun = useCallback(() => {
     soundRef.current?.start();
     soundRef.current?.uiClick();
+    soundRef.current?.startMusic(1);
     scrapAtRunStartRef.current = save.totalScrap;
     gameRef.current?.start(save.upgrades, save.totalScrap, save.highScore);
     setRunResult(null);
     setHud(null);
     setLevelBanner(null);
+    setVictoryBanner(null);
     setSubmittedThisRun(false);
     setView("playing");
     const seen = window.localStorage.getItem("chs3d_tut_seen");
     if (!seen) {
       setShowTutorial(true);
       window.localStorage.setItem("chs3d_tut_seen", "1");
-      setTimeout(() => setShowTutorial(false), 4500);
     }
-    // Y8 SDK PLACEHOLDER — show pre-roll/interstitial ad before run:
-    // if ((window as any).y8?.showAd) (window as any).y8.showAd();
   }, [save.upgrades, save.totalScrap, save.highScore]);
 
   const onRetry = useCallback(() => {
     soundRef.current?.uiClick();
+    soundRef.current?.startMusic(1);
     scrapAtRunStartRef.current = save.totalScrap;
     gameRef.current?.start(save.upgrades, save.totalScrap, save.highScore);
     setRunResult(null);
     setHud(null);
     setLevelBanner(null);
+    setVictoryBanner(null);
     setSubmittedThisRun(false);
     setView("playing");
-    // Y8 SDK PLACEHOLDER — interstitial after death/retry
   }, [save.upgrades, save.totalScrap, save.highScore]);
 
   const onPause = useCallback(() => {
@@ -225,6 +244,7 @@ export default function App() {
 
   const onMenu = useCallback(() => {
     soundRef.current?.uiClick();
+    soundRef.current?.stopMusic();
     gameRef.current?.endRun();
     setView("menu");
   }, []);
@@ -283,6 +303,7 @@ export default function App() {
 
   const onSteer = useCallback((v: number) => gameRef.current?.setMobileSteer(v), []);
   const onBoostHold = useCallback((v: boolean) => gameRef.current?.setMobileBoost(v), []);
+  const onBrakeHold = useCallback((v: boolean) => gameRef.current?.setMobileBrake(v), []);
   const onPower = useCallback(() => gameRef.current?.triggerPower(), []);
 
   const rootClass = useMemo(() => `game-root ${shakeTrigger > 0 ? "shake" : ""}`, [shakeTrigger]);
@@ -325,7 +346,7 @@ export default function App() {
       {/* Level-up banner */}
       {levelBanner && view === "playing" && (
         <div key={levelBanner.id}
-             className="absolute inset-x-0 top-1/3 z-40 flex flex-col items-center pointer-events-none"
+             className="absolute inset-x-0 top-1/4 z-40 flex flex-col items-center pointer-events-none"
              style={{ animation: "levelBannerIn 0.6s ease-out" }}>
           <div className="text-xs neon-text-cyan tracking-[0.5em] mb-1">▸ LEVEL UP ◂</div>
           <div className="neon-title text-5xl sm:text-7xl tracking-widest">
@@ -333,6 +354,31 @@ export default function App() {
           </div>
           <div className="neon-text-yellow text-2xl sm:text-3xl font-black tracking-widest mt-1 uppercase">
             {levelBanner.themeName}
+          </div>
+          <div className="mt-3 flex gap-4 text-sm sm:text-base font-bold">
+            <span className="neon-text-pink">+{levelBanner.reward.health} HP</span>
+            <span className="neon-text-cyan">+{levelBanner.reward.boost} BOOST</span>
+            <span className="neon-text-yellow">+{levelBanner.reward.bonus.toLocaleString()} PTS</span>
+          </div>
+        </div>
+      )}
+
+      {/* Victory banner — final level cleared */}
+      {victoryBanner && view === "playing" && (
+        <div key={victoryBanner.id}
+             className="absolute inset-x-0 top-1/4 z-40 flex flex-col items-center pointer-events-none"
+             style={{ animation: "levelBannerIn 0.6s ease-out" }}>
+          <div className="text-xs neon-text-yellow tracking-[0.5em] mb-1">★ HIGHWAY CONQUERED ★</div>
+          <div className="neon-title text-5xl sm:text-7xl tracking-widest">VICTORY!</div>
+          <div className="neon-text-cyan text-xl sm:text-2xl font-black tracking-widest mt-2 uppercase">
+            All 5 zones cleared
+          </div>
+          <div className="mt-3 flex gap-4 text-sm sm:text-base font-bold">
+            <span className="neon-text-yellow">+5,000 BONUS</span>
+            <span className="neon-text-pink">FULL REPAIR</span>
+          </div>
+          <div className="mt-2 neon-text-cyan text-xs tracking-widest">
+            Endless mode unlocked — keep smashing!
           </div>
         </div>
       )}
@@ -348,7 +394,12 @@ export default function App() {
       )}
 
       {view === "playing" && (
-        <MobileControls onSteer={onSteer} onBoostHold={onBoostHold} onPower={onPower} />
+        <MobileControls
+          onSteer={onSteer}
+          onBoostHold={onBoostHold}
+          onBrakeHold={onBrakeHold}
+          onPower={onPower}
+        />
       )}
 
       {view === "menu" && (

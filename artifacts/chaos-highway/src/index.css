@@ -233,6 +233,12 @@ html, body, #root {
   box-shadow: 0 0 15px rgba(0, 240, 255, 0.7), inset 0 0 14px rgba(255, 43, 214, 0.2);
 }
 
+.touch-btn-pink {
+  background: radial-gradient(circle at 35% 30%, rgba(255, 122, 0, 0.5), rgba(10, 4, 20, 0.85) 70%);
+  border-color: #ff7a00;
+  box-shadow: 0 0 15px rgba(255, 122, 0, 0.7), inset 0 0 14px rgba(255, 212, 0, 0.2);
+}
+
 .joystick-base {
   background: radial-gradient(circle, rgba(255, 43, 214, 0.18), rgba(10, 4, 20, 0.6) 70%);
   border: 2px solid rgba(255, 43, 214, 0.55);

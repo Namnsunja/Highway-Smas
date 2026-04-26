@@ -3,13 +3,14 @@ import { useEffect, useRef, useState } from "react";
 interface Props {
   onSteer: (v: number) => void;
   onBoostHold: (v: boolean) => void;
+  onBrakeHold: (v: boolean) => void;
   onPower: () => void;
 }
 
 const JOY_RADIUS = 60; // visual radius
 const KNOB_RADIUS = 28;
 
-export function MobileControls({ onSteer, onBoostHold, onPower }: Props) {
+export function MobileControls({ onSteer, onBoostHold, onBrakeHold, onPower }: Props) {
   const baseRef = useRef<HTMLDivElement>(null);
   const knobRef = useRef<HTMLDivElement>(null);
   const [active, setActive] = useState(false);
@@ -104,13 +105,24 @@ export function MobileControls({ onSteer, onBoostHold, onPower }: Props) {
         >
           BOOST
         </button>
-        <button
-          onTouchStart={(e) => { e.preventDefault(); onPower(); }}
-          className="touch-btn touch-btn-cyan rounded-full text-xs"
-          style={{ width: 64, height: 64 }}
-        >
-          SMASH
-        </button>
+        <div className="flex gap-2 items-center">
+          <button
+            onTouchStart={(e) => { e.preventDefault(); onBrakeHold(true); }}
+            onTouchEnd={(e) => { e.preventDefault(); onBrakeHold(false); }}
+            onTouchCancel={(e) => { e.preventDefault(); onBrakeHold(false); }}
+            className="touch-btn touch-btn-pink rounded-full text-xs"
+            style={{ width: 64, height: 64 }}
+          >
+            BRAKE
+          </button>
+          <button
+            onTouchStart={(e) => { e.preventDefault(); onPower(); }}
+            className="touch-btn touch-btn-cyan rounded-full text-xs"
+            style={{ width: 64, height: 64 }}
+          >
+            SMASH
+          </button>
+        </div>
       </div>
     </div>
   );

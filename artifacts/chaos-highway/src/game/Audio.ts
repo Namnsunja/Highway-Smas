@@ -10,6 +10,12 @@ export class SoundEngine {
   private muted = false;
   private started = false;
 
+  // Background music
+  private musicGain: GainNode | null = null;
+  private musicTimer: number | null = null;
+  private musicLevel = 1;
+  private musicBeat = 0;
+
   constructor(muted = false) {
     this.muted = muted;
   }
@@ -249,6 +255,187 @@ export class SoundEngine {
     flt.connect(g);
     g.connect(this.master);
     noise.start(t);
+  }
+
+  /** Start the looping synthwave background music. Loops until stopMusic(). */
+  startMusic(level = 1) {
+    this.ensure();
+    if (!this.ctx || !this.master) return;
+    this.musicLevel = level;
+    if (this.musicGain || this.musicTimer !== null) return; // already playing
+    const gain = this.ctx.createGain();
+    gain.gain.value = 0.18;
+    gain.connect(this.master);
+    this.musicGain = gain;
+    this.musicBeat = 0;
+
+    const bpm = 110;
+    const beatDur = 60 / bpm;
+
+    // Schedule the next bar a bit ahead so timing is rock-solid
+    const tick = () => {
+      if (!this.ctx || !this.musicGain) return;
+      const t = this.ctx.currentTime + 0.04;
+      const lvl = Math.max(0, Math.min(4, this.musicLevel - 1));
+      // Root note Hz per level (different musical key for each theme)
+      const roots = [82.4, 110, 87.3, 98, 65.4]; // E, A, F, G, C
+      const root = roots[lvl]!;
+      const arp = [0, 12, 7, 12, 0, 15, 7, 10]; // 8-step bass arp pattern
+      const beat = this.musicBeat;
+      const semi = arp[beat % arp.length]!;
+      const f = root * Math.pow(2, semi / 12);
+
+      // ---- Bass note ----
+      const bo = this.ctx.createOscillator();
+      bo.type = "sawtooth";
+      bo.frequency.value = f;
+      const bg = this.ctx.createGain();
+      bg.gain.setValueAtTime(0.0001, t);
+      bg.gain.exponentialRampToValueAtTime(0.42, t + 0.01);
+      bg.gain.exponentialRampToValueAtTime(0.0001, t + beatDur * 0.7);
+      const bf = this.ctx.createBiquadFilter();
+      bf.type = "lowpass";
+      bf.frequency.value = 520 + lvl * 140;
+      bf.Q.value = 4;
+      bo.connect(bf);
+      bf.connect(bg);
+      bg.connect(this.musicGain);
+      bo.start(t);
+      bo.stop(t + beatDur * 0.85);
+
+      // ---- Kick drum on beats 0, 2, 4, 6 (every other) ----
+      if (beat % 2 === 0) {
+        const ko = this.ctx.createOscillator();
+        ko.type = "sine";
+        ko.frequency.setValueAtTime(130, t);
+        ko.frequency.exponentialRampToValueAtTime(42, t + 0.16);
+        const kg = this.ctx.createGain();
+        kg.gain.setValueAtTime(0.0001, t);
+        kg.gain.exponentialRampToValueAtTime(0.7, t + 0.005);
+        kg.gain.exponentialRampToValueAtTime(0.0001, t + 0.28);
+        ko.connect(kg);
+        kg.connect(this.musicGain);
+        ko.start(t);
+        ko.stop(t + 0.32);
+      }
+
+      // ---- Snare-ish noise on beats 1, 3, 5, 7 ----
+      if (beat % 4 === 2) {
+        const dur = 0.18;
+        const buf = this.ctx.createBuffer(1, Math.floor(this.ctx.sampleRate * dur), this.ctx.sampleRate);
+        const data = buf.getChannelData(0);
+        for (let i = 0; i < data.length; i++) {
+          data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / data.length, 1.5);
+        }
+        const n = this.ctx.createBufferSource();
+        n.buffer = buf;
+        const sf = this.ctx.createBiquadFilter();
+        sf.type = "bandpass";
+        sf.frequency.value = 1800;
+        sf.Q.value = 1.4;
+        const sg = this.ctx.createGain();
+        sg.gain.value = 0.32;
+        n.connect(sf);
+        sf.connect(sg);
+        sg.connect(this.musicGain);
+        n.start(t);
+      }
+
+      // ---- Hi-hat tick every beat ----
+      {
+        const dur = 0.05;
+        const buf = this.ctx.createBuffer(1, Math.floor(this.ctx.sampleRate * dur), this.ctx.sampleRate);
+        const data = buf.getChannelData(0);
+        for (let i = 0; i < data.length; i++) {
+          data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / data.length, 2);
+        }
+        const n = this.ctx.createBufferSource();
+        n.buffer = buf;
+        const hf = this.ctx.createBiquadFilter();
+        hf.type = "highpass";
+        hf.frequency.value = 7000;
+        const hg = this.ctx.createGain();
+        hg.gain.value = beat % 2 === 1 ? 0.18 : 0.10;
+        n.connect(hf);
+        hf.connect(hg);
+        hg.connect(this.musicGain);
+        n.start(t);
+      }
+
+      // ---- Pad chord on beat 0 of each 8-beat bar ----
+      if (beat % 8 === 0) {
+        // minor 7 chord: 0, 3, 7, 10 semitones above root*2
+        const padBase = root * 2;
+        const intervals = [0, 3, 7, 10];
+        for (const semitone of intervals) {
+          const pf = padBase * Math.pow(2, semitone / 12);
+          const po = this.ctx.createOscillator();
+          po.type = "triangle";
+          po.frequency.value = pf;
+          const pg = this.ctx.createGain();
+          pg.gain.setValueAtTime(0.0001, t);
+          pg.gain.linearRampToValueAtTime(0.06, t + 0.5);
+          pg.gain.exponentialRampToValueAtTime(0.0001, t + beatDur * 8 * 0.92);
+          po.connect(pg);
+          pg.connect(this.musicGain);
+          po.start(t);
+          po.stop(t + beatDur * 8);
+        }
+      }
+
+      // ---- Lead arpeggio on higher levels ----
+      if (lvl >= 2) {
+        const lo = this.ctx.createOscillator();
+        lo.type = "square";
+        lo.frequency.value = root * 4 * Math.pow(2, semi / 12);
+        const lg = this.ctx.createGain();
+        lg.gain.setValueAtTime(0.0001, t);
+        lg.gain.exponentialRampToValueAtTime(0.05 + lvl * 0.012, t + 0.005);
+        lg.gain.exponentialRampToValueAtTime(0.0001, t + beatDur * 0.45);
+        const lf = this.ctx.createBiquadFilter();
+        lf.type = "lowpass";
+        lf.frequency.value = 2200 + lvl * 600;
+        lo.connect(lf);
+        lf.connect(lg);
+        lg.connect(this.musicGain);
+        lo.start(t);
+        lo.stop(t + beatDur * 0.5);
+      }
+
+      this.musicBeat = (this.musicBeat + 1) % 64;
+    };
+
+    tick();
+    this.musicTimer = window.setInterval(tick, beatDur * 1000);
+  }
+
+  /** Stop the background music. */
+  stopMusic() {
+    if (this.musicTimer !== null) {
+      clearInterval(this.musicTimer);
+      this.musicTimer = null;
+    }
+    if (this.musicGain && this.ctx) {
+      const g = this.musicGain;
+      const t = this.ctx.currentTime;
+      try {
+        g.gain.cancelScheduledValues(t);
+        g.gain.setValueAtTime(g.gain.value, t);
+        g.gain.linearRampToValueAtTime(0, t + 0.25);
+        setTimeout(() => {
+          try { g.disconnect(); } catch { /* ignore */ }
+        }, 350);
+      } catch {
+        try { g.disconnect(); } catch { /* ignore */ }
+      }
+      this.musicGain = null;
+    }
+    this.musicBeat = 0;
+  }
+
+  /** Update the music's musical key/intensity to match the level. */
+  setMusicLevel(level: number) {
+    this.musicLevel = level;
   }
 
   /** UI click */
