@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/"
+title = "Chaos Highway Smash 3D"
+version = "1.0.0"
+id = "artifacts/chaos-highway"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 24919
+
+[services.development]
+run = "pnpm --filter @workspace/chaos-highway run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/chaos-highway", "run", "build" ]
+publicDir = "artifacts/chaos-highway/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "24919"
+BASE_PATH = "/"
