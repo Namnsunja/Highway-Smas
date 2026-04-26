@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Game, type HudData, type RunResult, type GameStatus } from "@/game/Game";
 import { SoundEngine } from "@/game/Audio";
-import { loadSave, writeSave, type SaveData } from "@/game/Storage";
+import {
+  loadSave, writeSave, addPlayerEntry, qualifiesForLeaderboard,
+  type SaveData,
+} from "@/game/Storage";
 import { StartScreen, LeaderboardOverlay } from "@/components/StartScreen";
 import { HUD } from "@/components/HUD";
 import { MobileControls } from "@/components/MobileControls";
@@ -15,6 +18,12 @@ interface FloatingScore {
   id: number;
   text: string;
   color: string;
+}
+
+interface LevelBanner {
+  id: number;
+  level: number;
+  themeName: string;
 }
 
 export default function App() {
@@ -31,7 +40,10 @@ export default function App() {
   const [floats, setFloats] = useState<FloatingScore[]>([]);
   const [shakeTrigger, setShakeTrigger] = useState(0);
   const [runResult, setRunResult] = useState<RunResult | null>(null);
+  const [levelBanner, setLevelBanner] = useState<LevelBanner | null>(null);
+  const [submittedThisRun, setSubmittedThisRun] = useState(false);
   const floatId = useRef(0);
+  const bannerId = useRef(0);
 
   // Init game once
   useEffect(() => {
@@ -47,20 +59,24 @@ export default function App() {
       onFloatingScore: (text, color) => {
         const id = ++floatId.current;
         setFloats((arr) => [...arr, { id, text, color }]);
-        // Cleanup after animation
         setTimeout(() => {
           setFloats((arr) => arr.filter((f) => f.id !== id));
         }, 1100);
       },
-      onChainEvent: () => {
-        // Could trigger extra UI here
-      },
+      onChainEvent: () => { /* extra UI hook */ },
       onShake: (s) => {
         setShakeTrigger((t) => t + 1);
         void s;
       },
+      onLevelUp: (level, themeName) => {
+        const id = ++bannerId.current;
+        setLevelBanner({ id, level, themeName });
+        setShakeTrigger((t) => t + 1);
+        setTimeout(() => {
+          setLevelBanner((b) => (b && b.id === id ? null : b));
+        }, 2800);
+      },
       onRunEnd: (result) => {
-        // Persist save: scrap earned this run + bank, high score, etc.
         setSave((prev) => {
           const earnedScrap = (hudRef.current?.scrap ?? 0) - scrapAtRunStartRef.current;
           const newBank = prev.totalScrap + Math.max(0, earnedScrap);
@@ -75,6 +91,7 @@ export default function App() {
           return next;
         });
         setRunResult(result);
+        setSubmittedThisRun(false);
         setView("gameover");
       },
       });
@@ -90,16 +107,13 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Keep ref to latest hud to compute scrap diff at run end
   const hudRef = useRef<HudData | null>(null);
   useEffect(() => { hudRef.current = hud; }, [hud]);
 
-  // Sync mute setting when toggled
   useEffect(() => {
     soundRef.current?.setMuted(save.muted);
   }, [save.muted]);
 
-  // Pause when tab hidden
   useEffect(() => {
     const onVis = () => {
       if (document.hidden && view === "playing") {
@@ -112,7 +126,6 @@ export default function App() {
     return () => document.removeEventListener("visibilitychange", onVis);
   }, [view]);
 
-  // Esc to pause
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.code === "Escape") {
@@ -137,31 +150,29 @@ export default function App() {
     gameRef.current?.start(save.upgrades, save.totalScrap, save.highScore);
     setRunResult(null);
     setHud(null);
+    setLevelBanner(null);
+    setSubmittedThisRun(false);
     setView("playing");
-    // Tutorial first time only
     const seen = window.localStorage.getItem("chs3d_tut_seen");
     if (!seen) {
       setShowTutorial(true);
       window.localStorage.setItem("chs3d_tut_seen", "1");
       setTimeout(() => setShowTutorial(false), 4500);
     }
-
     // Y8 SDK PLACEHOLDER — show pre-roll/interstitial ad before run:
     // if ((window as any).y8?.showAd) (window as any).y8.showAd();
   }, [save.upgrades, save.totalScrap, save.highScore]);
 
   const onRetry = useCallback(() => {
-    // The game may have credited scrap on the run that we haven't saved yet via save.totalScrap.
-    // Use the most-recent save state (which already added run's scrap on onRunEnd).
     soundRef.current?.uiClick();
     scrapAtRunStartRef.current = save.totalScrap;
     gameRef.current?.start(save.upgrades, save.totalScrap, save.highScore);
     setRunResult(null);
     setHud(null);
+    setLevelBanner(null);
+    setSubmittedThisRun(false);
     setView("playing");
-
-    // Y8 SDK PLACEHOLDER — interstitial after death/retry:
-    // if ((window as any).y8?.showAd) (window as any).y8.showAd();
+    // Y8 SDK PLACEHOLDER — interstitial after death/retry
   }, [save.upgrades, save.totalScrap, save.highScore]);
 
   const onPause = useCallback(() => {
@@ -214,7 +225,6 @@ export default function App() {
 
   const onMenu = useCallback(() => {
     soundRef.current?.uiClick();
-    // End any running game
     gameRef.current?.endRun();
     setView("menu");
   }, []);
@@ -242,7 +252,7 @@ export default function App() {
 
   const onShare = useCallback(async () => {
     if (!runResult) return;
-    const text = `I just smashed ${runResult.score.toLocaleString()} points in Chaos Highway Smash 3D! Distance: ${runResult.distance.toLocaleString()}m, best chain x${runResult.bestChain}. Try to beat me!`;
+    const text = `I just smashed ${runResult.score.toLocaleString()} points on Level ${runResult.level} of Chaos Highway Smash 3D! Distance: ${runResult.distance.toLocaleString()}m, best chain x${runResult.bestChain}. Try to beat me!`;
     try {
       if (navigator.share) {
         await navigator.share({ title: "Chaos Highway Smash 3D", text });
@@ -255,19 +265,37 @@ export default function App() {
     }
   }, [runResult]);
 
-  // Mobile control wiring
+  const onSubmitLeaderboardName = useCallback((name: string) => {
+    if (!runResult) return;
+    soundRef.current?.uiClick();
+    setSave((prev) => {
+      const next = addPlayerEntry(prev, {
+        name,
+        score: runResult.score,
+        distance: runResult.distance,
+        level: runResult.level,
+      });
+      writeSave(next);
+      return next;
+    });
+    setSubmittedThisRun(true);
+  }, [runResult]);
+
   const onSteer = useCallback((v: number) => gameRef.current?.setMobileSteer(v), []);
   const onBoostHold = useCallback((v: boolean) => gameRef.current?.setMobileBoost(v), []);
   const onPower = useCallback(() => gameRef.current?.triggerPower(), []);
 
-  // Camera shake CSS class
   const rootClass = useMemo(() => `game-root ${shakeTrigger > 0 ? "shake" : ""}`, [shakeTrigger]);
-  // Reset shake class after animation
   useEffect(() => {
     if (shakeTrigger === 0) return;
     const t = setTimeout(() => setShakeTrigger(0), 450);
     return () => clearTimeout(t);
   }, [shakeTrigger]);
+
+  const qualifies = useMemo(
+    () => (runResult ? qualifiesForLeaderboard(runResult.score, save.playerEntries) : false),
+    [runResult, save.playerEntries],
+  );
 
   return (
     <div className={rootClass}>
@@ -294,6 +322,21 @@ export default function App() {
         </div>
       </div>
 
+      {/* Level-up banner */}
+      {levelBanner && view === "playing" && (
+        <div key={levelBanner.id}
+             className="absolute inset-x-0 top-1/3 z-40 flex flex-col items-center pointer-events-none"
+             style={{ animation: "levelBannerIn 0.6s ease-out" }}>
+          <div className="text-xs neon-text-cyan tracking-[0.5em] mb-1">▸ LEVEL UP ◂</div>
+          <div className="neon-title text-5xl sm:text-7xl tracking-widest">
+            LEVEL {levelBanner.level}
+          </div>
+          <div className="neon-text-yellow text-2xl sm:text-3xl font-black tracking-widest mt-1 uppercase">
+            {levelBanner.themeName}
+          </div>
+        </div>
+      )}
+
       {/* HUD always rendered when playing */}
       {(view === "playing" || view === "paused") && (
         <HUD
@@ -304,12 +347,10 @@ export default function App() {
         />
       )}
 
-      {/* Mobile controls */}
       {view === "playing" && (
         <MobileControls onSteer={onSteer} onBoostHold={onBoostHold} onPower={onPower} />
       )}
 
-      {/* Menu */}
       {view === "menu" && (
         <StartScreen
           save={save}
@@ -320,7 +361,6 @@ export default function App() {
         />
       )}
 
-      {/* Pause */}
       {view === "paused" && (
         <PauseMenu
           onResume={onResume}
@@ -331,7 +371,6 @@ export default function App() {
         />
       )}
 
-      {/* Shop */}
       {view === "shop" && (
         <Shop
           scrap={save.totalScrap}
@@ -341,16 +380,18 @@ export default function App() {
         />
       )}
 
-      {/* Leaderboard */}
       {view === "leaderboard" && (
-        <LeaderboardOverlay playerScore={save.highScore} onClose={onCloseLeaderboard} />
+        <LeaderboardOverlay save={save} onClose={onCloseLeaderboard} />
       )}
 
-      {/* Game Over */}
       {view === "gameover" && runResult && (
         <GameOverScreen
           result={runResult}
           highScore={save.highScore}
+          qualifiesForBoard={qualifies}
+          defaultName={save.lastPlayerName}
+          alreadySubmitted={submittedThisRun}
+          onSubmitName={onSubmitLeaderboardName}
           onRetry={onRetry}
           onShop={onShopFromGameOver}
           onMenu={onMenu}
