@@ -1,17 +1,35 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { RunResult } from "@/game/Game";
 
 interface Props {
   result: RunResult;
   highScore: number;
+  qualifiesForBoard: boolean;
+  defaultName: string;
+  alreadySubmitted: boolean;
+  onSubmitName: (name: string) => void;
   onRetry: () => void;
   onShop: () => void;
   onMenu: () => void;
   onShare: () => void;
 }
 
-export function GameOverScreen({ result, highScore, onRetry, onShop, onMenu, onShare }: Props) {
+export function GameOverScreen({
+  result,
+  highScore,
+  qualifiesForBoard,
+  defaultName,
+  alreadySubmitted,
+  onSubmitName,
+  onRetry,
+  onShop,
+  onMenu,
+  onShare,
+}: Props) {
   const [showConfetti, setShowConfetti] = useState(result.newHighScore);
+  const [name, setName] = useState(defaultName || "");
+  const [submitted, setSubmitted] = useState(alreadySubmitted);
+  const inputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (result.newHighScore) {
@@ -21,6 +39,18 @@ export function GameOverScreen({ result, highScore, onRetry, onShop, onMenu, onS
     }
     return undefined;
   }, [result.newHighScore]);
+
+  useEffect(() => {
+    if (qualifiesForBoard && !submitted) {
+      setTimeout(() => inputRef.current?.focus(), 100);
+    }
+  }, [qualifiesForBoard, submitted]);
+
+  const submit = () => {
+    const clean = name.trim().slice(0, 14) || "ANON";
+    onSubmitName(clean);
+    setSubmitted(true);
+  };
 
   return (
     <div className="absolute inset-0 z-30 flex items-center justify-center p-4"
@@ -56,9 +86,41 @@ export function GameOverScreen({ result, highScore, onRetry, onShop, onMenu, onS
         <div className="grid grid-cols-2 gap-2 my-4">
           <Stat label="Distance" value={`${result.distance.toLocaleString()}m`} color="#00f0ff" />
           <Stat label="Score" value={result.score.toLocaleString()} color="#ffd400" big />
-          <Stat label="Best Chain" value={`x${result.bestChain}`} color="#ff2bd6" />
-          <Stat label="High Score" value={highScore.toLocaleString()} color="#5eff7c" />
+          <Stat label="Reached Lv" value={`L${result.level}`} color="#ff2bd6" />
+          <Stat label="Best Chain" value={`x${result.bestChain}`} color="#5eff7c" />
         </div>
+        <div className="hud-pill rounded-md px-3 py-1 mb-3 text-xs text-white/70">
+          High Score: <span className="neon-text-yellow font-mono font-black ml-1">{highScore.toLocaleString()}</span>
+        </div>
+
+        {/* Leaderboard name entry */}
+        {qualifiesForBoard && !submitted && (
+          <div className="rounded-md p-3 mb-3 border border-pink-500/50"
+               style={{ background: "rgba(255, 43, 214, 0.10)" }}>
+            <div className="neon-text-pink text-sm font-black tracking-widest mb-2">
+              🏆 LEADERBOARD QUALIFIED!
+            </div>
+            <div className="flex gap-2">
+              <input
+                ref={inputRef}
+                value={name}
+                onChange={(e) => setName(e.target.value.slice(0, 14))}
+                placeholder="Your driver name"
+                maxLength={14}
+                onKeyDown={(e) => { if (e.key === "Enter") submit(); }}
+                className="flex-1 bg-black/40 border border-white/30 rounded px-3 py-2 text-white font-mono outline-none focus:border-pink-400"
+              />
+              <button onClick={submit} className="neon-btn neon-btn-yellow px-4 py-2 rounded text-sm font-black">
+                SAVE
+              </button>
+            </div>
+          </div>
+        )}
+        {submitted && (
+          <div className="text-xs neon-text-green tracking-widest mb-3 font-black">
+            ✓ ADDED TO LEADERBOARD
+          </div>
+        )}
 
         <div className="flex flex-col gap-2.5">
           <button onClick={onRetry} className="neon-btn px-6 py-3 rounded-md text-xl">🔄 PLAY AGAIN</button>

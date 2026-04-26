@@ -37,18 +37,33 @@ export function HUD({ hud, onPause, showTutorial, onDismissTutorial }: Props) {
   return (
     <div className="ui-layer">
       {/* Top bar: distance/score/scrap */}
-      <div className="absolute top-2 sm:top-4 left-1/2 -translate-x-1/2 flex items-center gap-2 sm:gap-3 pointer-events-none">
-        <div className="hud-pill rounded-md px-3 py-1.5 text-center">
-          <div className="text-[9px] sm:text-[10px] uppercase tracking-widest text-cyan-300/80">Distance</div>
-          <div className="text-sm sm:text-lg font-black neon-text-cyan font-mono">{hud.distance.toLocaleString()}m</div>
+      <div className="absolute top-2 sm:top-4 left-1/2 -translate-x-1/2 flex flex-col items-center gap-1.5 sm:gap-2 pointer-events-none">
+        <div className="flex items-center gap-2 sm:gap-3">
+          <div className="hud-pill rounded-md px-3 py-1.5 text-center">
+            <div className="text-[9px] sm:text-[10px] uppercase tracking-widest text-cyan-300/80">Distance</div>
+            <div className="text-sm sm:text-lg font-black neon-text-cyan font-mono">{hud.distance.toLocaleString()}m</div>
+          </div>
+          <div className="hud-pill rounded-md px-4 py-1.5 text-center" style={{ borderColor: "rgba(255, 212, 0, 0.65)", boxShadow: "0 0 10px rgba(255, 212, 0, 0.4)" }}>
+            <div className="text-[9px] sm:text-[10px] uppercase tracking-widest text-yellow-300/80">Score</div>
+            <div className="text-base sm:text-xl font-black neon-text-yellow font-mono">{hud.score.toLocaleString()}</div>
+          </div>
+          <div className="hud-pill rounded-md px-3 py-1.5 text-center" style={{ borderColor: "rgba(94, 255, 124, 0.65)", boxShadow: "0 0 10px rgba(94, 255, 124, 0.35)" }}>
+            <div className="text-[9px] sm:text-[10px] uppercase tracking-widest text-green-300/80">Scrap</div>
+            <div className="text-sm sm:text-lg font-black neon-text-green font-mono">{hud.scrap.toLocaleString()}</div>
+          </div>
         </div>
-        <div className="hud-pill rounded-md px-4 py-1.5 text-center" style={{ borderColor: "rgba(255, 212, 0, 0.65)", boxShadow: "0 0 10px rgba(255, 212, 0, 0.4)" }}>
-          <div className="text-[9px] sm:text-[10px] uppercase tracking-widest text-yellow-300/80">Score</div>
-          <div className="text-base sm:text-xl font-black neon-text-yellow font-mono">{hud.score.toLocaleString()}</div>
-        </div>
-        <div className="hud-pill rounded-md px-3 py-1.5 text-center" style={{ borderColor: "rgba(94, 255, 124, 0.65)", boxShadow: "0 0 10px rgba(94, 255, 124, 0.35)" }}>
-          <div className="text-[9px] sm:text-[10px] uppercase tracking-widest text-green-300/80">Scrap</div>
-          <div className="text-sm sm:text-lg font-black neon-text-green font-mono">{hud.scrap.toLocaleString()}</div>
+        {/* Level pill + progress bar */}
+        <div className="hud-pill rounded-md px-3 py-1 flex items-center gap-2"
+             style={{ borderColor: "rgba(255, 43, 214, 0.65)", boxShadow: "0 0 10px rgba(255, 43, 214, 0.35)" }}>
+          <div className="text-[10px] sm:text-xs neon-text-pink font-black tracking-widest">LV {hud.level}</div>
+          <div className="text-[10px] sm:text-xs text-white/85 font-bold tracking-wider">{hud.levelName}</div>
+          <div className="w-16 sm:w-24 h-1 bg-white/15 rounded overflow-hidden">
+            <div className="h-full" style={{
+              width: `${Math.round(hud.levelProgress * 100)}%`,
+              background: "linear-gradient(90deg, #ff2bd6, #ffd400)",
+              boxShadow: "0 0 6px #ff2bd6",
+            }} />
+          </div>
         </div>
       </div>
 
