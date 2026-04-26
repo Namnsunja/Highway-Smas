@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { ActivePower, HudData } from "@/game/Game";
 
 interface Props {
@@ -15,9 +15,84 @@ const POWER_LABELS: Record<ActivePower["kind"], { label: string; color: string }
   mega: { label: "MEGA SMASH", color: "#ffd400" },
 };
 
+interface TutorialStep {
+  title: string;
+  desktopBody: ReactNode;
+  mobileBody: ReactNode;
+}
+
+const TUTORIAL_STEPS: TutorialStep[] = [
+  {
+    title: "STEER",
+    desktopBody: (
+      <>
+        <div>Use <span className="neon-text-cyan font-bold">A / D</span> or <span className="neon-text-cyan font-bold">←/→</span> to swerve between lanes.</div>
+        <div className="text-xs text-white/60 mt-1">Avoid heavy trucks — smash little cars instead.</div>
+      </>
+    ),
+    mobileBody: (
+      <>
+        <div>Drag the <span className="neon-text-cyan font-bold">joystick</span> left or right to steer.</div>
+        <div className="text-xs text-white/60 mt-1">Avoid heavy trucks — smash little cars instead.</div>
+      </>
+    ),
+  },
+  {
+    title: "BRAKE",
+    desktopBody: (
+      <>
+        <div>Hold <span className="neon-text-cyan font-bold">S</span> or <span className="neon-text-cyan font-bold">↓</span> to brake.</div>
+        <div className="text-xs text-white/60 mt-1">Slow down through tight traffic to thread the needle.</div>
+      </>
+    ),
+    mobileBody: (
+      <>
+        <div>Tap & hold the <span className="neon-text-cyan font-bold">BRAKE</span> button to slow down.</div>
+        <div className="text-xs text-white/60 mt-1">Useful when traffic gets crowded.</div>
+      </>
+    ),
+  },
+  {
+    title: "BOOST",
+    desktopBody: (
+      <>
+        <div>Hold <span className="neon-text-cyan font-bold">SPACE</span> or <span className="neon-text-cyan font-bold">SHIFT</span> for nitro boost.</div>
+        <div className="text-xs text-white/60 mt-1">Boosting drains the blue meter — pickups refill it.</div>
+      </>
+    ),
+    mobileBody: (
+      <>
+        <div>Hold the <span className="neon-text-cyan font-bold">BOOST</span> button for nitro.</div>
+        <div className="text-xs text-white/60 mt-1">Boosting drains the blue meter — pickups refill it.</div>
+      </>
+    ),
+  },
+  {
+    title: "SMASH!",
+    desktopBody: (
+      <>
+        <div>Ram cars to <span className="neon-text-pink font-bold">smash</span> them and build a chain.</div>
+        <div className="text-xs text-white/60 mt-1">Each level cleared rewards HP, boost & bonus points!</div>
+      </>
+    ),
+    mobileBody: (
+      <>
+        <div>Ram cars to <span className="neon-text-pink font-bold">smash</span> them and build a chain.</div>
+        <div className="text-xs text-white/60 mt-1">Each level cleared rewards HP, boost & bonus points!</div>
+      </>
+    ),
+  },
+];
+
 export function HUD({ hud, onPause, showTutorial, onDismissTutorial }: Props) {
   const [chainPulse, setChainPulse] = useState(0);
   const lastChain = useRef(1);
+  const [tutStep, setTutStep] = useState(0);
+
+  // Reset to step 0 whenever the tutorial is shown
+  useEffect(() => {
+    if (showTutorial) setTutStep(0);
+  }, [showTutorial]);
 
   useEffect(() => {
     if (!hud) return;
@@ -139,22 +214,68 @@ export function HUD({ hud, onPause, showTutorial, onDismissTutorial }: Props) {
         <div className="text-[9px] text-white/50">km/h</div>
       </div>
 
-      {/* Tutorial toast */}
-      {showTutorial && (
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 panel rounded-xl px-6 py-5 text-center max-w-xs pointer-events-auto"
-             onClick={onDismissTutorial}>
-          <div className="neon-text-pink font-black text-xl mb-2">CONTROLS</div>
-          <div className="text-sm text-white/85 leading-relaxed desktop-only">
-            <div><span className="neon-text-cyan font-bold">A/D</span> or arrows = steer</div>
-            <div><span className="neon-text-cyan font-bold">SPACE</span> = nitro boost</div>
+      {/* Multi-step tutorial — Steer → Brake → Boost → Smash */}
+      {showTutorial && (() => {
+        const step = TUTORIAL_STEPS[tutStep] ?? TUTORIAL_STEPS[0]!;
+        const isLast = tutStep >= TUTORIAL_STEPS.length - 1;
+        return (
+          <div className="absolute inset-0 z-30 flex items-center justify-center pointer-events-auto"
+               style={{ background: "rgba(0,0,0,0.45)" }}>
+            <div className="panel rounded-xl px-6 py-5 text-center w-[88%] max-w-sm"
+                 onClick={(e) => e.stopPropagation()}>
+              <div className="text-[10px] tracking-[0.4em] text-white/60 mb-1">
+                STEP {tutStep + 1} / {TUTORIAL_STEPS.length}
+              </div>
+              <div className="neon-text-pink font-black text-2xl mb-3">{step.title}</div>
+              <div className="text-sm text-white/85 leading-relaxed desktop-only mb-1">
+                {step.desktopBody}
+              </div>
+              <div className="text-sm text-white/85 leading-relaxed mobile-only mb-1">
+                {step.mobileBody}
+              </div>
+              {/* Step dots */}
+              <div className="flex justify-center gap-1.5 my-3">
+                {TUTORIAL_STEPS.map((_, i) => (
+                  <span
+                    key={i}
+                    className="rounded-full"
+                    style={{
+                      width: 8, height: 8,
+                      background: i === tutStep ? "#ff2bd6" : "rgba(255,255,255,0.25)",
+                      boxShadow: i === tutStep ? "0 0 8px #ff2bd6" : "none",
+                    }}
+                  />
+                ))}
+              </div>
+              <div className="flex gap-2 justify-center">
+                <button
+                  onClick={onDismissTutorial}
+                  className="hud-pill rounded-md px-3 py-2 text-xs font-bold text-white/70 hover:bg-white/10"
+                >
+                  Skip
+                </button>
+                {!isLast ? (
+                  <button
+                    onClick={() => setTutStep((s) => Math.min(TUTORIAL_STEPS.length - 1, s + 1))}
+                    className="hud-pill rounded-md px-5 py-2 text-sm font-black neon-text-cyan hover:bg-white/10"
+                    style={{ borderColor: "rgba(0, 240, 255, 0.65)" }}
+                  >
+                    Next ▸
+                  </button>
+                ) : (
+                  <button
+                    onClick={onDismissTutorial}
+                    className="hud-pill rounded-md px-5 py-2 text-sm font-black neon-text-yellow hover:bg-white/10"
+                    style={{ borderColor: "rgba(255, 212, 0, 0.65)" }}
+                  >
+                    LET'S GO!
+                  </button>
+                )}
+              </div>
+            </div>
           </div>
-          <div className="text-sm text-white/85 leading-relaxed mobile-only">
-            <div><span className="neon-text-cyan font-bold">Joystick</span> = steer</div>
-            <div><span className="neon-text-cyan font-bold">BOOST</span> button = nitro</div>
-          </div>
-          <div className="text-xs text-white/50 mt-3">Tap to dismiss</div>
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 }
