@@ -90,7 +90,7 @@ const PAINT_COLORS = [
   0xffffff, // chrome white
 ];
 
-type Variant = "sedan" | "truck" | "monster" | "tank" | "police" | "taxi" | "semi" | "van" | "sport";
+type Variant = "sedan" | "truck" | "monster" | "tank" | "police" | "taxi" | "semi" | "van" | "sport" | "bus" | "muscle";
 
 function buildCarMesh(opts: {
   color: number;
@@ -489,7 +489,55 @@ export const LEVEL_THEMES: LevelTheme[] = [
     billboardColors: [0xff2bd6, 0xff4422, 0xffd400, 0x00f0ff, 0x66ff66],
     trafficSpeedMul: 1.55, trafficDensityMul: 1.3,
     playerSpeedBonus: 26,
-    distance: 3000, // final level — completing it triggers victory
+    distance: 2400,
+  },
+  {
+    name: "Frostbite Pass",
+    shortName: "FROSTBITE",
+    fogColor: 0x9ed8ff,
+    fogNear: 35, fogFar: 220,
+    ambientColor: 0xaaccff, ambientIntensity: 0.7,
+    dirColor: 0xffffff, dirIntensity: 1.1,
+    hemiSky: 0xddeeff, hemiGround: 0x445566,
+    bgColor: 0x6e95b8,
+    roadColor: 0x3a4a55, curbColor: 0x88ddff,
+    buildingTints: [0x4d6678, 0x6688aa, 0x88aabb],
+    billboardColors: [0x88ddff, 0x44aaff, 0xffffff, 0xddeeff, 0x66ccff],
+    trafficSpeedMul: 1.35, trafficDensityMul: 1.05,
+    playerSpeedBonus: 14,
+    distance: 2200,
+  },
+  {
+    name: "Sandstorm Mirage",
+    shortName: "DESERT",
+    fogColor: 0xc89a55,
+    fogNear: 30, fogFar: 200,
+    ambientColor: 0xffcc77, ambientIntensity: 0.75,
+    dirColor: 0xffaa55, dirIntensity: 1.15,
+    hemiSky: 0xffaa55, hemiGround: 0x664422,
+    bgColor: 0x8a5a28,
+    roadColor: 0x5a3a18, curbColor: 0xffaa33,
+    buildingTints: [0x885533, 0x664422, 0x553322],
+    billboardColors: [0xffaa33, 0xff7a00, 0xffd400, 0xff4422, 0xff8855],
+    trafficSpeedMul: 1.3, trafficDensityMul: 1.0,
+    playerSpeedBonus: 16,
+    distance: 2400,
+  },
+  {
+    name: "Galaxy Outrun",
+    shortName: "GALAXY",
+    fogColor: 0x080018,
+    fogNear: 50, fogFar: 320,
+    ambientColor: 0x6622cc, ambientIntensity: 0.65,
+    dirColor: 0xcc88ff, dirIntensity: 1.0,
+    hemiSky: 0xaa44ff, hemiGround: 0x080020,
+    bgColor: 0x040010,
+    roadColor: 0x12082a, curbColor: 0xaa44ff,
+    buildingTints: [0x2a1058, 0x44228a, 0x180844],
+    billboardColors: [0xaa44ff, 0xff44dd, 0x44ffee, 0xffffff, 0x66bbff],
+    trafficSpeedMul: 1.5, trafficDensityMul: 1.2,
+    playerSpeedBonus: 22,
+    distance: 2800, // final level — completing it triggers VICTORY
   },
 ];
 
@@ -1387,12 +1435,14 @@ export class Game {
     // Weighted random pool that gets spicier deeper / by level
     const lvl = this.level;
     const pool: { v: Variant; w: number }[] = [
-      { v: "sedan", w: 30 },
-      { v: "taxi", w: 14 },
-      { v: "van", w: 12 },
+      { v: "sedan", w: 28 },
+      { v: "taxi", w: 13 },
+      { v: "muscle", w: 10 },
+      { v: "van", w: 11 },
       { v: "police", w: 7 + lvl * 2 },
       { v: "sport", w: 8 + lvl * 1.5 },
       { v: "truck", w: 8 + distFactor * 6 },
+      { v: "bus", w: 5 + distFactor * 5 + lvl * 0.5 },
       { v: "semi", w: 4 + distFactor * 8 + lvl },
       { v: "monster", w: lvl >= 3 ? 4 + lvl : 0 },
       { v: "tank", w: lvl >= 4 ? 3 + lvl : 0 },
@@ -1427,11 +1477,15 @@ export class Game {
         width = 2.5; length = 5.4; height = 1.5; baseHealth = 110; color = pick([0x44aa22, 0xaa4422, 0x222244]); break;
       case "tank":
         width = 2.9; length = 6.4; height = 1.7; baseHealth = 180; color = pick([0x445544, 0x665544, 0x334433]); break;
+      case "bus":
+        width = 2.5; length = 9.2; height = 2.6; baseHealth = 110; color = pick([0xffaa22, 0xcc4422, 0x227755, 0x224477]); break;
+      case "muscle":
+        width = 2.05; length = 4.9; height = 1.05; baseHealth = 55; color = pick([0xff2222, 0x222222, 0x224488, 0x884400, 0x3a8a3a, 0xffaa22]); break;
       default: // sedan
         width = 2.0; length = 4.5; height = 1.05; baseHealth = 35; color = pick(themeColors);
     }
 
-    const isLarge = ["truck", "semi", "monster", "tank"].includes(variant);
+    const isLarge = ["truck", "semi", "monster", "tank", "bus"].includes(variant);
 
     const parts = buildCarMesh({
       color, width, length, height,
@@ -1449,8 +1503,10 @@ export class Game {
     const goingTowardsPlayer = Math.random() < 0.65;
     const variantSpeedMul =
       variant === "sport" ? 1.4 :
+      variant === "muscle" ? 1.25 :
       variant === "police" ? 1.2 :
       variant === "semi" || variant === "tank" ? 0.7 :
+      variant === "bus" ? 0.75 :
       variant === "monster" ? 0.85 : 1.0;
     const baseSpeed = (isLarge ? rand(8, 16) : rand(12, 22)) * variantSpeedMul * this.theme.trafficSpeedMul;
     const vz = goingTowardsPlayer ? -baseSpeed : baseSpeed * 0.5;
@@ -1475,7 +1531,7 @@ export class Game {
   // -------- Power-up spawning --------
   private spawnPowersUntil(targetZ: number) {
     while (this.powerSpawnZ < targetZ) {
-      this.powerSpawnZ += rand(120, 220);
+      this.powerSpawnZ += rand(70, 140);
       const kinds: PowerKind[] = ["nitro", "magnet", "repair", "mega"];
       const kind = pick(kinds);
       const lane = Math.floor(Math.random() * LANE_X.length);
@@ -1632,6 +1688,9 @@ export class Game {
     if (this.keys["ArrowRight"] || this.keys["KeyD"]) steerInput += 1;
     steerInput += this.mobileSteer;
     steerInput = clamp(steerInput, -1, 1);
+    // Camera looks down +Z, so world +X renders on screen LEFT.
+    // Flip the input so pressing/swiping right moves the player visually right.
+    steerInput = -steerInput;
     let boostHeld = !!(this.keys["Space"] || this.keys["ShiftLeft"] || this.keys["ShiftRight"] || this.mobileBoost);
     const brakeHeld = !!(this.keys["KeyS"] || this.keys["ArrowDown"] || this.mobileBrake);
 
@@ -1699,7 +1758,7 @@ export class Game {
     this.playerGroup.rotation.z = THREE.MathUtils.damp(this.playerGroup.rotation.z, leanRoll, 8, sdt);
     this.playerGroup.rotation.y = THREE.MathUtils.damp(
       this.playerGroup.rotation.y,
-      clamp(-this.steerVel / 30, -0.18, 0.18),
+      clamp(this.steerVel / 30, -0.18, 0.18),
       8,
       sdt,
     );
