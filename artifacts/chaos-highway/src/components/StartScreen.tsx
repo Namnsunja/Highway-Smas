@@ -34,9 +34,9 @@ export function StartScreen({ save, onPlay, onShop, onLeaderboard, onToggleMute 
         </div>
 
         <p className="text-center text-white/85 text-sm sm:text-base max-w-xl mt-5 px-2 leading-snug">
-          Rampage through 5 wild levels of endless traffic. Smash cars, trigger
-          chain explosions, blast through Toxic, Inferno and Cyberpunk zones,
-          upgrade your wrecking machine, and climb the leaderboard.
+          Rampage through 8 wild biomes of endless traffic. Smash cars, trigger
+          chain explosions, tear through Toxic, Inferno, Frostbite, Desert and
+          Galaxy zones, upgrade your wrecking machine, and climb the leaderboard.
         </p>
 
         <div className="flex flex-wrap justify-center gap-x-5 gap-y-1 mt-4 text-[11px] sm:text-xs text-white/60 uppercase tracking-widest max-w-xl">
@@ -46,7 +46,7 @@ export function StartScreen({ save, onPlay, onShop, onLeaderboard, onToggleMute 
               <span>•</span>
               <span>Car Destruction</span>
               <span>•</span>
-              <span>5 Levels</span>
+              <span>8 Biomes</span>
               <span>•</span>
               <span>Smash</span>
               <span>•</span>
@@ -104,8 +104,8 @@ export function StartScreen({ save, onPlay, onShop, onLeaderboard, onToggleMute 
             {save.muted ? "🔇 Sound: OFF" : "🔊 Sound: ON"}
           </button>
           <span className="hidden sm:inline">|</span>
-          <span className="hidden sm:inline">Desktop: Arrows / WASD · Space = Boost</span>
-          <span className="sm:hidden">Tap & hold for joystick</span>
+          <span className="hidden sm:inline">Desktop: A/D or ←/→ steer · S/↓ brake · Space boost</span>
+          <span className="sm:hidden">Mobile: joystick + BRAKE / BOOST</span>
         </div>
       </div>
     </div>
