@@ -1,0 +1,8 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "GB2vDNXJtbyClNGf2t41S"
+uri = "file://chaos-highway-game.zip"
+type = "unspecified"
+title = "Chaos Highway Smash 3D — Playable Build"
