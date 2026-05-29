@@ -1,0 +1,3 @@
+[build]
+  command = "pnpm --filter @workspace/chaos-highway run build"
+  publish = "artifacts/chaos-highway/dist/public"
